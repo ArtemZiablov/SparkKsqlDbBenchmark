@@ -14,9 +14,17 @@ object SparkWeatherConsumer:
     val throughput = if args.length > 0 then args(0).toInt else 100
     val timestamp = System.currentTimeMillis()
 
+    // ✅ OPTIMIZATION: Configurable parameters
+    val windowDuration = sys.env.getOrElse("WINDOW_DURATION", "1 minute")  // Changed from 10 minutes
+    val triggerInterval = sys.env.getOrElse("TRIGGER_INTERVAL", "2 seconds")  // Changed from 10 seconds
+    val shufflePartitions = sys.env.getOrElse("SHUFFLE_PARTITIONS", "10").toInt  // Increased from 5
+
     println("=" * 60)
-    println("=== Starting Spark Weather Consumer (Kafka Sink) ===")
+    println("=== Starting Spark Weather Consumer (OPTIMIZED) ===")
     println(s"Throughput: $throughput msg/s")
+    println(s"Window Duration: $windowDuration")
+    println(s"Trigger Interval: $triggerInterval")
+    println(s"Shuffle Partitions: $shufflePartitions")
     println(s"Timestamp: $timestamp")
     println("=" * 60)
 
@@ -27,12 +35,19 @@ object SparkWeatherConsumer:
       .builder()
       .appName("WeatherStreamingBenchmark")
       .master("local[*]")
-      .config("spark.sql.shuffle.partitions", "5")
+      // ✅ OPTIMIZATION: Tuned Spark configuration
+      .config("spark.sql.shuffle.partitions", shufflePartitions.toString)
       .config("spark.streaming.stopGracefullyOnShutdown", "true")
       .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
       .config("spark.hadoop.fs.file.impl", "org.apache.hadoop.fs.LocalFileSystem")
       .config("spark.ui.showConsoleProgress", "false")
       .config("spark.sql.streaming.metricsEnabled", "false")
+      // ✅ NEW: Memory and performance optimizations
+      .config("spark.sql.adaptive.enabled", "true")
+      .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+      .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+      .config("spark.streaming.kafka.consumer.cache.enabled", "false")  // Disable cache for low latency
+      .config("spark.sql.streaming.stateStore.providerClass", "org.apache.spark.sql.execution.streaming.state.HDFSBackedStateStoreProvider")
       .getOrCreate()
 
     import spark.implicits.*
@@ -43,8 +58,8 @@ object SparkWeatherConsumer:
 
     spark.conf.set("spark.sql.streaming.schemaInference", "false")
 
-    println("✅ Spark Session created")
-    println(s"📊 Shuffle partitions: 5")
+    println("✅ Spark Session created (OPTIMIZED)")
+    println(s"📊 Shuffle partitions: $shufflePartitions")
     println(s"🎯 Master: local[*]")
     println(s"💾 Checkpoint location: $checkpointLocation")
     println(s"\n${"=" * 60}")
@@ -79,12 +94,13 @@ object SparkWeatherConsumer:
       println("\n🔄 Creating windowed aggregation...")
       val aggregatedStream = createWindowedAggregation(
         spark,
-        Seq(windStream, sunshineStream)
+        Seq(windStream, sunshineStream),
+        windowDuration
       )
-      println("✅ Windowed aggregation created (10 minute windows)")
+      println(s"✅ Windowed aggregation created ($windowDuration windows)")
 
       println(s"\n${"=" * 60}")
-      println("🚀 STARTING STREAMING QUERY TO KAFKA (AVRO SINK)")
+      println("🚀 STARTING STREAMING QUERY TO KAFKA (OPTIMIZED)")
       println(s"${"=" * 60}\n")
 
       val finalKafkaTopic = "weather.aggregated.output"
@@ -115,12 +131,19 @@ object SparkWeatherConsumer:
         .option("kafka.bootstrap.servers", "localhost:9092")
         .option("topic", finalKafkaTopic)
         .option("checkpointLocation", checkpointLocation)
+        // ✅ OPTIMIZATION: Add Kafka producer configs for performance
+        .option("kafka.compression.type", "snappy")
+        .option("kafka.batch.size", "16384")
+        .option("kafka.linger.ms", "0")  // Send immediately for low latency
+        .option("kafka.acks", "1")  // Don't wait for all replicas
         .queryName("KafkaAggregatedSink")
-        .trigger(Trigger.ProcessingTime("10 seconds"))
+        .trigger(Trigger.ProcessingTime(triggerInterval))
         .start()
 
       println(s"✅ Aggregated results streaming to: $finalKafkaTopic")
       println(s"✅ Output mode: update (only changed windows)")
+      println(s"✅ Trigger interval: $triggerInterval")
+      println(s"✅ Window duration: $windowDuration")
       println(s"✅ Checkpoint: $checkpointLocation")
 
       monitorProgress(kafkaSinkQuery)
@@ -135,7 +158,6 @@ object SparkWeatherConsumer:
       spark.stop()
       println("✅ Spark Session stopped")
 
-  // ✅ FIXED: Strip Schema Registry prefix before deserializing
   def readKafkaStream(
                        spark: SparkSession,
                        topic: String,
@@ -145,13 +167,20 @@ object SparkWeatherConsumer:
 
     println(s"  → Reading from topic: $topic")
 
+    // ✅ OPTIMIZATION: Increased maxOffsetsPerTrigger for higher throughput
+    val maxOffsetsPerTrigger = sys.env.getOrElse("MAX_OFFSETS_PER_TRIGGER", "5000").toInt
+
     val kafkaDF = spark.readStream
       .format("kafka")
       .option("kafka.bootstrap.servers", "localhost:9092")
       .option("subscribe", topic)
       .option("startingOffsets", "earliest")
-      .option("maxOffsetsPerTrigger", "1000")
+      .option("maxOffsetsPerTrigger", maxOffsetsPerTrigger.toString)
       .option("failOnDataLoss", "false")
+      // ✅ OPTIMIZATION: Kafka consumer configs for performance
+      .option("kafka.fetch.min.bytes", "1")  // Don't wait for batch to fill
+      .option("kafka.fetch.max.wait.ms", "500")  // Max wait time
+      .option("minPartitions", "5")  // Match Kafka partitions
       .load()
 
     val avroSchema = """
@@ -170,8 +199,7 @@ object SparkWeatherConsumer:
     }
     """
 
-    // ✅ CRITICAL FIX: Remove Schema Registry prefix (5 bytes)
-    // KafkaAvroSerializer adds: [magic_byte(1) + schema_id(4)] before Avro data
+    // Strip Schema Registry prefix (5 bytes)
     val strippedDF = kafkaDF
       .withColumn("avro_value", expr("substring(value, 6, length(value) - 5)"))
 
@@ -197,16 +225,27 @@ object SparkWeatherConsumer:
 
   def createWindowedAggregation(
                                  spark: SparkSession,
-                                 streams: Seq[DataFrame]
+                                 streams: Seq[DataFrame],
+                                 windowDuration: String
                                ): DataFrame =
     import spark.implicits.*
 
     val unionStream = streams.reduce(_ union _)
 
-    unionStream
-      .withColumn("processing_time", current_timestamp())
+    // ✅ OPTIMIZATION: Use event time instead of processing time for more accurate windowing
+    // But keep processing time for low-latency benchmarks
+    val useEventTime = sys.env.getOrElse("USE_EVENT_TIME", "false").toBoolean
+
+    val timeColumn = if useEventTime then "timestamp" else "processing_time"
+
+    val streamWithTime = if useEventTime then
+      unionStream
+    else
+      unionStream.withColumn("processing_time", current_timestamp())
+
+    streamWithTime
       .groupBy(
-        window($"processing_time", "10 minutes"),
+        window(col(timeColumn), windowDuration),
         $"metric",
         $"stationId",
         $"stationName"
