@@ -4,7 +4,6 @@ package object models:
 
   // ===== INPUT MODELS (из CSV) =====
 
-  /** Данные о ветре из CSV файла */
   case class WindData(
                        timeObserved: String,
                        stationId: Int,
@@ -12,7 +11,6 @@ package object models:
                        mean_wind_speed: Double
                      )
 
-  /** Данные о солнечном свете из CSV файла */
   case class SunshineData(
                            timeObserved: String,
                            stationId: Int,
@@ -20,27 +18,19 @@ package object models:
                            bright_sunshine: Double
                          )
 
-  // ===== KAFKA MODELS (Avro сериализация) =====
+  // ===== KAFKA MODELS  =====
 
-  /**
-   * Унифицированная модель для погодных данных
-   * Используется для отправки в Kafka и обработки в Spark
-   */
   case class WeatherData(
                           timeObserved: String,
                           stationId: Int,
                           stationName: String,
                           metric: String,        // "wind_speed" или "sunshine"
                           value: Double,
-                          producer_ts: Long      // ✅ FIXED: Added timestamp
+                          producer_ts: Long  
                         )
 
-  // ===== OUTPUT MODELS (агрегированные результаты) =====
-
-  /**
-   * Агрегированные данные по временным окнам
-   * ✅ FIXED: Added latency tracking fields
-   */
+  // ===== OUTPUT MODELS =====
+  
   case class WeatherAggregation(
                                  windowStart: String,
                                  windowEnd: String,
@@ -51,13 +41,12 @@ package object models:
                                  minValue: Double,
                                  maxValue: Double,
                                  messageCount: Long,
-                                 minProducerTs: Long,       // ✅ FIXED: Earliest producer timestamp in window
-                                 processingEndTs: Long      // ✅ FIXED: When aggregation completed
+                                 minProducerTs: Long,      
+                                 processingEndTs: Long     
                                )
 
   // ===== BENCHMARK MODELS =====
-
-  /** Метрики производительности бенчмарка */
+  
   case class BenchmarkMetrics(
                                throughputMsgPerSec: Int,
                                avgLatencyMs: Double,
@@ -68,8 +57,7 @@ package object models:
                                messagesProcessed: Long,
                                testDurationSeconds: Long
                              )
-
-  /** Результат одного теста */
+  
   case class TestResult(
                          testName: String,
                          targetThroughput: Int,

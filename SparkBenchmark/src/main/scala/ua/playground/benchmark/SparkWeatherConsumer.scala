@@ -14,7 +14,7 @@ object SparkWeatherConsumer:
     val throughput = if args.length > 0 then args(0).toInt else 100
     val timestamp = System.currentTimeMillis()
 
-    // ✅ OPTIMIZATION: Configurable parameters
+    // OPTIMIZATION: Configurable parameters
     val windowDuration = sys.env.getOrElse("WINDOW_DURATION", "1 minute")  // Changed from 10 minutes
     val triggerInterval = sys.env.getOrElse("TRIGGER_INTERVAL", "2 seconds")  // Changed from 10 seconds
     val shufflePartitions = sys.env.getOrElse("SHUFFLE_PARTITIONS", "10").toInt  // Increased from 5
@@ -35,14 +35,14 @@ object SparkWeatherConsumer:
       .builder()
       .appName("WeatherStreamingBenchmark")
       .master("local[*]")
-      // ✅ OPTIMIZATION: Tuned Spark configuration
+      // OPTIMIZATION: Tuned Spark configuration
       .config("spark.sql.shuffle.partitions", shufflePartitions.toString)
       .config("spark.streaming.stopGracefullyOnShutdown", "true")
       .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
       .config("spark.hadoop.fs.file.impl", "org.apache.hadoop.fs.LocalFileSystem")
       .config("spark.ui.showConsoleProgress", "false")
       .config("spark.sql.streaming.metricsEnabled", "false")
-      // ✅ NEW: Memory and performance optimizations
+      //Memory and performance optimizations
       .config("spark.sql.adaptive.enabled", "true")
       .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
       .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
@@ -131,7 +131,7 @@ object SparkWeatherConsumer:
         .option("kafka.bootstrap.servers", "localhost:9092")
         .option("topic", finalKafkaTopic)
         .option("checkpointLocation", checkpointLocation)
-        // ✅ OPTIMIZATION: Add Kafka producer configs for performance
+        // OPTIMIZATION: Add Kafka producer configs for performance
         .option("kafka.compression.type", "snappy")
         .option("kafka.batch.size", "16384")
         .option("kafka.linger.ms", "0")  // Send immediately for low latency
@@ -167,7 +167,7 @@ object SparkWeatherConsumer:
 
     println(s"  → Reading from topic: $topic")
 
-    // ✅ OPTIMIZATION: Increased maxOffsetsPerTrigger for higher throughput
+    // OPTIMIZATION: Increased maxOffsetsPerTrigger for higher throughput
     val maxOffsetsPerTrigger = sys.env.getOrElse("MAX_OFFSETS_PER_TRIGGER", "5000").toInt
 
     val kafkaDF = spark.readStream
@@ -177,7 +177,7 @@ object SparkWeatherConsumer:
       .option("startingOffsets", "earliest")
       .option("maxOffsetsPerTrigger", maxOffsetsPerTrigger.toString)
       .option("failOnDataLoss", "false")
-      // ✅ OPTIMIZATION: Kafka consumer configs for performance
+      // OPTIMIZATION: Kafka consumer configs for performance
       .option("kafka.fetch.min.bytes", "1")  // Don't wait for batch to fill
       .option("kafka.fetch.max.wait.ms", "500")  // Max wait time
       .option("minPartitions", "5")  // Match Kafka partitions
@@ -232,7 +232,7 @@ object SparkWeatherConsumer:
 
     val unionStream = streams.reduce(_ union _)
 
-    // ✅ OPTIMIZATION: Use event time instead of processing time for more accurate windowing
+    // OPTIMIZATION: Use event time instead of processing time for more accurate windowing
     // But keep processing time for low-latency benchmarks
     val useEventTime = sys.env.getOrElse("USE_EVENT_TIME", "false").toBoolean
 
