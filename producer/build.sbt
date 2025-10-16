@@ -1,4 +1,4 @@
-name := "BenchmarkRunner"
+name := "producer"
 version := "1.0.0"
 scalaVersion := "3.3.7"
 

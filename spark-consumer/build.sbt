@@ -6,7 +6,7 @@ val kafkaVersion = "3.6.0"
 
 lazy val root = (project in file("."))
   .settings(
-    name := "SparkStreamingBenchmark",
+    name := "spark-consumer",
 
     libraryDependencies ++= Seq(
       // Spark
