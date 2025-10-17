@@ -1,5 +1,14 @@
-# Multi-stage build
-FROM hseeberger/scala-sbt:eclipse-temurin-11.0.17_8_1.8.2_3.2.2 AS builder
+# Multi-stage build - Stage 1: Build with SBT
+FROM eclipse-temurin:11-jdk AS builder
+
+# Install SBT
+RUN apt-get update && \
+    apt-get install -y curl gnupg && \
+    echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | tee /etc/apt/sources.list.d/sbt.list && \
+    curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | apt-key add && \
+    apt-get update && \
+    apt-get install -y sbt && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -17,7 +26,8 @@ FROM eclipse-temurin:11-jre-jammy
 WORKDIR /app
 
 # Copy JAR from builder
-COPY --from=builder /app/target/scala-3.*/latency-monitor-assembly-*.jar /app/latency-monitor.jar
+COPY --from=builder /app/target/scala-3.3.1/latency-monitor.jar /app/latency-monitor.jar
+
 
 # Create output directory
 RUN mkdir -p /app/benchmark-results
@@ -33,5 +43,5 @@ ENV MAX_EMPTY_POLLS=5
 # Entry point
 ENTRYPOINT ["java", "-Xmx512m", "-Xms256m", "-jar", "/app/latency-monitor.jar"]
 
-# Default argument (throughput for labeling)
+# Default argument
 CMD ["100"]

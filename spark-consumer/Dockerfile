@@ -1,5 +1,14 @@
-# Multi-stage build
-FROM hseeberger/scala-sbt:eclipse-temurin-11.0.17_8_1.8.2_3.2.2 AS builder
+# Multi-stage build - Stage 1: Build with SBT
+FROM eclipse-temurin:11-jdk AS builder
+
+# Install SBT
+RUN apt-get update && \
+    apt-get install -y curl gnupg && \
+    echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | tee /etc/apt/sources.list.d/sbt.list && \
+    curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | apt-key add && \
+    apt-get update && \
+    apt-get install -y sbt && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -11,7 +20,7 @@ COPY src ./src
 # Build fat JAR
 RUN sbt clean assembly
 
-# Runtime stage with Spark support
+# Runtime stage
 FROM eclipse-temurin:11-jre-jammy
 
 WORKDIR /app
@@ -22,7 +31,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy JAR from builder
-COPY --from=builder /app/target/scala-3.*/SparkStreamingBenchmark-assembly-*.jar /app/consumer.jar
+COPY --from=builder /app/target/scala-3.3.7/spark-consumer.jar /app/consumer.jar
 
 # Create necessary directories
 RUN mkdir -p /tmp/spark/checkpoints && \
@@ -38,5 +47,5 @@ ENV SPARK_LOG_DIR=/app/logs
 # Entry point
 ENTRYPOINT ["java", "-Xmx4g", "-Xms2g", "-jar", "/app/consumer.jar"]
 
-# Default argument (throughput)
+# Default argument
 CMD ["100"]
