@@ -8,7 +8,7 @@ set -e
 
 NAMESPACE="bd-bd-gr-05"
 THROUGHPUT=${1:-100}
-KAFKA_BOOTSTRAP_SERVERS="kafka-g5.bd-bd-gr-05.svc.cluster.local:9092"
+KAFKA_BOOTSTRAP_SERVERS="kafka-g5-controller-0.kafka-g5-controller-headless.bd-bd-gr-05.svc.cluster.local:9092,kafka-g5-controller-1.kafka-g5-controller-headless.bd-bd-gr-05.svc.cluster.local:9092,kafka-g5-controller-2.kafka-g5-controller-headless.bd-bd-gr-05.svc.cluster.local:9092"
 SCHEMA_REGISTRY_URL="http://schema-registry.bd-bd-gr-05.svc.cluster.local:8081"
 
 echo "=========================================="

@@ -1,3 +1,4 @@
+# k8s/deployment.yaml
 # ================================================================
 # KUBERNETES DEPLOYMENT - Using Your Existing Kafka (kafka-g5)
 # Namespace: bd-bd-gr-05
@@ -25,6 +26,7 @@ spec:
         - containerPort: 8081
         env:
         - name: SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS
+          # This should point to the headless service for peer discovery
           value: "kafka-g5-controller-headless.bd-bd-gr-05.svc.cluster.local:9092"
         - name: SCHEMA_REGISTRY_HOST_NAME
           value: "schema-registry"
@@ -76,7 +78,8 @@ spec:
         args: ["100"]
         env:
         - name: KAFKA_BOOTSTRAP_SERVERS
-          value: "kafka-g5-controller-headless.bd-bd-gr-05.svc.cluster.local:9092"
+          # <-- SIMPLIFIED AND FIXED: Point to the stable client service
+          value: "kafka-g5.bd-bd-gr-05.svc.cluster.local:9092"
         - name: SCHEMA_REGISTRY_URL
           value: "http://schema-registry.bd-bd-gr-05.svc.cluster.local:8081"
         - name: WINDOW_DURATION

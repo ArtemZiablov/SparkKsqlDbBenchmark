@@ -10,6 +10,9 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
@@ -24,10 +27,17 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      # CRITICAL SETTINGS FOR SINGLE BROKER
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_NUM_PARTITIONS: 5  # Match Spark's partition count
+      KAFKA_NUM_PARTITIONS: 1
+    volumes:
+      - kafka-data:/var/lib/kafka/data
 
   schema-registry:
     image: confluentinc/cp-schema-registry:7.5.0
@@ -57,12 +67,16 @@ services:
       KSQL_KSQL_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE: "true"
       KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE: "true"
-      # Performance tuning to match Spark profiles
-      KSQL_KSQL_STREAMS_COMMIT_INTERVAL_MS: 1000  # For low latency
-      KSQL_KSQL_STREAMS_CACHE_MAX_BYTES_BUFFERING: 0  # For low latency
-      KSQL_KSQL_STREAMS_NUM_STREAM_THREADS: 4
+      # Disable exactly-once to avoid transaction issues
+      KSQL_PROCESSING_GUARANTEE: "at_least_once"
+      KSQL_KSQL_STREAMS_PROCESSING_GUARANTEE: "at_least_once"
+      KSQL_KSQL_STREAMS_REPLICATION_FACTOR: 1
       KSQL_KSQL_INTERNAL_TOPIC_REPLICAS: 1
-      KSQL_KSQL_SINK_PARTITIONS: 5  # Match Kafka partitions
+      KSQL_KSQL_SINK_REPLICAS: 1
+      # Performance settings
+      KSQL_KSQL_STREAMS_COMMIT_INTERVAL_MS: 2000
+      KSQL_KSQL_STREAMS_CACHE_MAX_BYTES_BUFFERING: 0
+      KSQL_KSQL_STREAMS_NUM_STREAM_THREADS: 2
 
   ksqldb-cli:
     image: confluentinc/ksqldb-cli:0.29.0
@@ -71,3 +85,8 @@ services:
       - ksqldb-server
     entrypoint: /bin/sh
     tty: true
+
+volumes:
+  zookeeper-data:
+  zookeeper-logs:
+  kafka-data:
