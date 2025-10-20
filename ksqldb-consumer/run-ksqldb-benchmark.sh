@@ -1,114 +1,172 @@
 #!/bin/bash
+# ================================================================
+# run-ksqldb-benchmark.sh
+# Clean workflow for ksqlDB benchmarking
+# Usage: ./run-ksqldb-benchmark.sh [throughput]
+# Example: ./run-ksqldb-benchmark.sh 100
+# ================================================================
 
-# Configuration
+set -e
+
 THROUGHPUT=${1:-100}
-PROFILE=${2:-"balanced"}
 
-echo "========================================"
+echo "=========================================="
 echo "   KSQLDB STREAMING BENCHMARK"
-echo "========================================"
+echo "=========================================="
 echo "Throughput: $THROUGHPUT msg/s"
-echo "Profile: $PROFILE"
-echo "========================================"
+echo "=========================================="
 echo ""
 
-# Get script directory and project root
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+# ================================================================
+# STEP 1: Cleanup old ksqlDB objects
+# ================================================================
+echo "Step 1: Cleaning up old queries..."
+docker exec ksqldb-cli ksql http://ksqldb-server:8088 --execute "TERMINATE ALL;" 2>&1 | \
+  grep -v "WARNING\|RMI\|Accept timed out\|jline" || true
 
-# Function to execute ksqlDB statements
-execute_ksql() {
-    local sql_file=$1
-    docker exec -i ksqldb-cli ksql http://ksqldb-server:8088 < "$sql_file"
-}
+sleep 3
 
-# Function to run ksqlDB query from string
-run_ksql_command() {
-    local command=$1
-    echo "$command" | docker exec -i ksqldb-cli ksql http://ksqldb-server:8088
-}
-
-# Start Docker services from project root
-echo "🚀 Starting Docker services..."
-cd "$PROJECT_ROOT"
-docker-compose up -d
-cd "$SCRIPT_DIR"
-sleep 10
-
-# Clean up existing queries
-echo "🧹 Cleaning up existing queries..."
-run_ksql_command "TERMINATE ALL;"
-sleep 2
-
-# Setup base streams
-echo "📊 Setting up base streams..."
-execute_ksql "$SCRIPT_DIR/scripts/setup.sql"
-
-# Configure ksqlDB based on profile
-case $PROFILE in
-  "low-latency")
-    echo "🚀 Configuring LOW LATENCY PROFILE"
-    SQL_FILE="$SCRIPT_DIR/profiles/low_latency.sql"
-    ;;
-  "high-throughput")
-    echo "📊 Configuring HIGH THROUGHPUT PROFILE"
-    SQL_FILE="$SCRIPT_DIR/profiles/high_throughput.sql"
-    ;;
-  "balanced")
-    echo "⚖️ Configuring BALANCED PROFILE"
-    SQL_FILE="$SCRIPT_DIR/profiles/balanced.sql"
-    ;;
-  *)
-    echo "❌ Unknown profile: $PROFILE"
-    exit 1
-    ;;
-esac
-
-# Start the aggregation query
+echo "✅ Old queries terminated"
 echo ""
-echo "📊 Starting aggregation query..."
-execute_ksql "$SQL_FILE"
 
-# Check the actual jar names in your project
-PRODUCER_JAR="$PROJECT_ROOT/producer/target/scala-3.3.1/benchmark-producer.jar"
-MONITOR_JAR="$PROJECT_ROOT/latency-monitor/target/scala-3.3.1/latency-monitor.jar"
+# ================================================================
+# STEP 2: Create fresh streams and tables
+# ================================================================
+echo "Step 2: Setting up ksqlDB streams and tables..."
 
-# Verify jars exist
-if [ ! -f "$PRODUCER_JAR" ]; then
-    echo "❌ Producer jar not found at: $PRODUCER_JAR"
-    echo "Please build the producer project first:"
-    echo "  cd $PROJECT_ROOT/producer && sbt assembly"
-    exit 1
-fi
+docker exec ksqldb-cli ksql http://ksqldb-server:8088 << 'KSQL'
+SET 'auto.offset.reset' = 'latest';
 
-if [ ! -f "$MONITOR_JAR" ]; then
-    echo "❌ Monitor jar not found at: $MONITOR_JAR"
-    echo "Please build the latency-monitor project first:"
-    echo "  cd $PROJECT_ROOT/latency-monitor && sbt assembly"
-    exit 1
-fi
+-- Drop old objects
+DROP TABLE IF EXISTS weather_aggregated_wind DELETE TOPIC;
+DROP TABLE IF EXISTS weather_aggregated_sunshine DELETE TOPIC;
+DROP STREAM IF EXISTS weather_wind DELETE TOPIC;
+DROP STREAM IF EXISTS weather_sunshine DELETE TOPIC;
 
-# Run producer
+-- Create source streams
+CREATE STREAM weather_wind (
+  timeObserved VARCHAR,
+  stationId INT,
+  stationName VARCHAR,
+  metric VARCHAR,
+  value DOUBLE,
+  producer_ts BIGINT
+) WITH (
+  KAFKA_TOPIC='weather.wind',
+  VALUE_FORMAT='AVRO'
+);
+
+CREATE STREAM weather_sunshine (
+  timeObserved VARCHAR,
+  stationId INT,
+  stationName VARCHAR,
+  metric VARCHAR,
+  value DOUBLE,
+  producer_ts BIGINT
+) WITH (
+  KAFKA_TOPIC='weather.sunshine',
+  VALUE_FORMAT='AVRO'
+);
+
+-- Create wind aggregation
+CREATE TABLE weather_aggregated_wind WITH (
+  KAFKA_TOPIC='weather.aggregated.wind.ksql',
+  PARTITIONS=5,
+  KEY_FORMAT='JSON',
+  VALUE_FORMAT='AVRO'
+) AS
+SELECT
+  stationId AS stationId,
+  LATEST_BY_OFFSET(stationName) AS stationName,
+  TIMESTAMPTOSTRING(WINDOWSTART, 'yyyy-MM-dd HH:mm:ss.SSS') AS window_start,
+  TIMESTAMPTOSTRING(WINDOWEND, 'yyyy-MM-dd HH:mm:ss.SSS') AS window_end,
+  metric AS metric,
+  ROUND(AVG(value), 2) AS avg_value,
+  ROUND(MIN(value), 2) AS min_value,
+  ROUND(MAX(value), 2) AS max_value,
+  COUNT(*) AS message_count,
+  MIN(producer_ts) AS min_producer_ts,
+  CAST(WINDOWEND AS BIGINT) AS processing_end_ts
+FROM weather_wind 
+WINDOW TUMBLING (SIZE 1 MINUTES)
+GROUP BY stationId, metric
+EMIT CHANGES;
+
+-- Create sunshine aggregation
+CREATE TABLE weather_aggregated_sunshine WITH (
+  KAFKA_TOPIC='weather.aggregated.sunshine.ksql',
+  PARTITIONS=5,
+  KEY_FORMAT='JSON',
+  VALUE_FORMAT='AVRO'
+) AS
+SELECT
+  stationId AS stationId,
+  LATEST_BY_OFFSET(stationName) AS stationName,
+  TIMESTAMPTOSTRING(WINDOWSTART, 'yyyy-MM-dd HH:mm:ss.SSS') AS window_start,
+  TIMESTAMPTOSTRING(WINDOWEND, 'yyyy-MM-dd HH:mm:ss.SSS') AS window_end,
+  metric AS metric,
+  ROUND(AVG(value), 2) AS avg_value,
+  ROUND(MIN(value), 2) AS min_value,
+  ROUND(MAX(value), 2) AS max_value,
+  COUNT(*) AS message_count,
+  MIN(producer_ts) AS min_producer_ts,
+  CAST(WINDOWEND AS BIGINT) AS processing_end_ts
+FROM weather_sunshine 
+WINDOW TUMBLING (SIZE 1 MINUTES)
+GROUP BY stationId, metric
+EMIT CHANGES;
+
+SHOW TABLES;
+KSQL
+
 echo ""
-echo "🚀 Starting data producers..."
-java -jar "$PRODUCER_JAR" $THROUGHPUT &
-PRODUCER_PID=$!
-
-echo "✅ Producer started (PID: $PRODUCER_PID)"
-
-# Let producer run for some time
-echo "⏳ Running producer for 60 seconds..."
-sleep 60
-
-# Wait for producer to finish
-echo "⏳ Waiting for producer to complete..."
-wait $PRODUCER_PID
-
-# Run latency monitor
+echo "✅ Streams and tables created"
 echo ""
-echo "📊 Running latency analysis..."
-sleep 5
-java -jar "$MONITOR_JAR" $THROUGHPUT
+
+# ================================================================
+# STEP 3: Start Producer
+# ================================================================
+echo "Step 3: Starting producer..."
+cd ../producer
+java -jar target/scala-3.3.7/benchmark-producer.jar $THROUGHPUT
+cd ..
+echo ""
+echo "✅ Producer completed"
+echo ""
+
+# ================================================================
+# STEP 4: Wait for ksqlDB to process
+# ================================================================
+echo "Step 4: Waiting for ksqlDB processing..."
+echo "   - Producer finished sending data"
+echo "   - Waiting for windows to close and emit results"
+echo "   - This takes ~90 seconds for 1-minute windows"
+echo ""
+
+for i in {1..9}; do
+    echo "   ⏳ Waiting... ($((i*10)) seconds elapsed)"
+    sleep 10
+done
 
 echo ""
-echo "✅ Benchmark complete!"
+echo "✅ Processing complete"
+echo ""
+
+# ================================================================
+# STEP 5: Run Latency Monitor
+# ================================================================
+echo "Step 5: Analyzing latency..."
+echo ""
+
+export INPUT_TOPIC="weather.aggregated.wind.ksql"
+cd latency-monitor
+java -jar target/scala-3.3.1/latency-monitor.jar $THROUGHPUT
+cd ..
+
+echo ""
+echo "=========================================="
+echo "   BENCHMARK COMPLETE"
+echo "=========================================="
+echo ""
+echo "Results saved to: ./benchmark-results/"
+echo ""

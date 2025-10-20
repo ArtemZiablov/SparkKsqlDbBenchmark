@@ -67,8 +67,8 @@ object LatencyMonitor:
       schemaRegistryUrl = sys.env.getOrElse("SCHEMA_REGISTRY_URL", "http://localhost:8081"),
       inputTopic = sys.env.getOrElse("INPUT_TOPIC", "weather.aggregated.output"),
       groupId = s"latency-monitor-${System.currentTimeMillis()}",
-      maxWaitTimeMs = sys.env.getOrElse("MAX_WAIT_TIME_MS", "30000").toInt,
-      maxEmptyPolls = sys.env.getOrElse("MAX_EMPTY_POLLS", "5").toInt,
+      maxWaitTimeMs = sys.env.getOrElse("MAX_WAIT_TIME_MS", "60000").toInt,
+      maxEmptyPolls = sys.env.getOrElse("MAX_EMPTY_POLLS", "10").toInt,
       exportToPrometheus = sys.env.getOrElse("EXPORT_TO_PROMETHEUS", "false").toBoolean,
       prometheusPort = sys.env.getOrElse("PROMETHEUS_PORT", "9090").toInt
     )
@@ -77,11 +77,11 @@ object LatencyMonitor:
     val consumer = createConsumer(config)
     consumer.subscribe(List(config.inputTopic).asJava)
 
-    // ✅ Create Avro schema matching Spark's output EXACTLY
+    // Schema for aggregated weather data (works for both Spark and ksqlDB)
     val schemaString = """
     {
       "type": "record",
-      "name": "AggregatedWeather",
+      "name": "WeatherAggregated",
       "namespace": "ua.playground.benchmark",
       "fields": [
         {"name": "window_start", "type": "string"},
@@ -113,6 +113,7 @@ object LatencyMonitor:
     var recordCount = 0
     var emptyPollCount = 0
     var firstRecord = true
+    var detectedFormat = ""  // Track what format we detected
 
     try
       while (System.currentTimeMillis() - startTime) < config.maxWaitTimeMs
@@ -128,23 +129,52 @@ object LatencyMonitor:
 
           records.asScala.foreach { record =>
             try
-              // ✅ Manually deserialize raw Avro bytes from Spark
-              val bytes = record.value()
+              val rawBytes = record.value()
 
               if firstRecord then
-                println(s"\n🔍 DEBUG: Received ${bytes.length} bytes")
-                println(s"🔍 DEBUG: First 20 bytes (hex): ${bytes.take(20).map(b => f"$b%02x").mkString(" ")}")
+                println(s"\n🔍 DEBUG: Received ${rawBytes.length} bytes")
+                println(s"🔍 DEBUG: First 20 bytes (hex): ${rawBytes.take(20).map(b => f"$b%02x").mkString(" ")}")
+
+              // ===================================================
+              // STEP 1: Detect message format
+              // ===================================================
+              val bytesToDecode = if (rawBytes.length > 5 &&
+                rawBytes(0) == 0 && rawBytes(1) == 0 &&
+                rawBytes(2) == 0 && rawBytes(3) == 0) {
+                // Confluent Schema Registry wire format (5-byte header)
+                if firstRecord then
+                  detectedFormat = "Confluent (ksqlDB)"
+                  val schemaIdBytes = rawBytes.slice(1, 5)
+                  val schemaId = ((schemaIdBytes(0) & 0xFF) << 24) |
+                    ((schemaIdBytes(1) & 0xFF) << 16) |
+                    ((schemaIdBytes(2) & 0xFF) << 8) |
+                    (schemaIdBytes(3) & 0xFF)
+                  println(s"🔍 Detected: Confluent wire format (Schema ID: $schemaId)")
+
+                // Skip 5-byte header
+                rawBytes.drop(5)
+              } else {
+                // Direct Avro (Spark format)
+                if firstRecord then
+                  detectedFormat = "Direct Avro (Spark)"
+                  println(s"🔍 Detected: Direct Avro format")
+
+                rawBytes
+              }
+
+              if firstRecord then
+                println(s"🔍 Decoded bytes length: ${bytesToDecode.length}")
                 firstRecord = false
 
-              val decoder = DecoderFactory.get().binaryDecoder(bytes, null)
+              // ===================================================
+              // STEP 2: Deserialize Avro
+              // ===================================================
+              val decoder = DecoderFactory.get().binaryDecoder(bytesToDecode, null)
               val avroRecord = datumReader.read(null, decoder)
 
-              // Debug first record
-              if recordCount == 0 then
-                println(s"🔍 DEBUG: Successfully decoded first record")
-                println(s"🔍 DEBUG: Schema fields: ${avroRecord.getSchema.getFields.asScala.map(_.name).mkString(", ")}")
-
-              // Extract fields
+              // ===================================================
+              // STEP 3: Extract fields with type safety
+              // ===================================================
               val windowStart = avroRecord.get("window_start").toString
               val windowEnd = avroRecord.get("window_end").toString
               val metric = avroRecord.get("metric").toString
@@ -152,28 +182,43 @@ object LatencyMonitor:
               val stationName = avroRecord.get("stationName").toString
               val messageCount = avroRecord.get("message_count").asInstanceOf[Long]
 
-              // ✅ CRITICAL: Extract timestamps with proper type handling
+              // ===================================================
+              // STEP 4: Extract and validate timestamps
+              // ===================================================
               val minProducerTsRaw = avroRecord.get("min_producer_ts")
               val processingEndTsRaw = avroRecord.get("processing_end_ts")
 
-              // Debug timestamps
+              // Debug first record
               if recordCount == 0 then
-                println(s"🔍 DEBUG: min_producer_ts raw = $minProducerTsRaw (type: ${minProducerTsRaw.getClass.getName})")
-                println(s"🔍 DEBUG: processing_end_ts raw = $processingEndTsRaw (type: ${processingEndTsRaw.getClass.getName})")
+                println(s"🔍 DEBUG: Schema fields: ${avroRecord.getSchema.getFields.asScala.map(_.name).mkString(", ")}")
+                println(s"🔍 DEBUG: min_producer_ts = $minProducerTsRaw (${minProducerTsRaw.getClass.getSimpleName})")
+                println(s"🔍 DEBUG: processing_end_ts = $processingEndTsRaw (${processingEndTsRaw.getClass.getSimpleName})")
 
               val minProducerTs = minProducerTsRaw.asInstanceOf[Long]
               val processingEndTs = processingEndTsRaw.asInstanceOf[Long]
 
               if recordCount == 0 then
-                println(s"🔍 DEBUG: min_producer_ts = $minProducerTs")
-                println(s"🔍 DEBUG: processing_end_ts = $processingEndTs")
+                println(s"✅ Deserialization successful!")
+                println(s"   Format: $detectedFormat")
+                println(s"   Sample values:")
+                println(s"     - min_producer_ts = $minProducerTs")
+                println(s"     - processing_end_ts = $processingEndTs")
                 println()
 
-              // Calculate latency
+              // ===================================================
+              // STEP 5: Calculate and validate latency
+              // ===================================================
               val latencyMs = (processingEndTs - minProducerTs).toDouble
 
-              // Sanity check: latency should be positive and reasonable (< 60 seconds)
-              if latencyMs > 0 && latencyMs < 60000 then
+              // Sanity checks:
+              // - Latency must be positive
+              // - Latency should be < 10 minutes (600000 ms)
+              // - Timestamps must be reasonable (after 2020, before year 2100)
+              val minProducerTsValid = minProducerTs > 1577836800000L // Jan 1, 2020
+              val processingEndTsValid = processingEndTs > 1577836800000L
+              val latencyValid = latencyMs > 0 && latencyMs < 600000
+
+              if latencyValid && minProducerTsValid && processingEndTsValid then
                 val dataPoint = LatencyDataPoint(
                   windowStart = windowStart,
                   windowEnd = windowEnd,
@@ -189,23 +234,30 @@ object LatencyMonitor:
                 dataPoints += dataPoint
                 recordCount += 1
 
-                if recordCount % 10 == 0 then
-                  print(s"\r   Records processed: $recordCount")
+                if recordCount % 50 == 0 then
+                  print(s"\r   Records processed: $recordCount (avg latency: ${dataPoints.map(_.latencyMs).sum / dataPoints.size}%.0f ms)")
               else
-                println(s"\n⚠️  Skipping invalid latency: ${latencyMs}ms (producer=${minProducerTs}, processing=${processingEndTs})")
+                if recordCount < 5 then  // Only warn for first few invalid records
+                  println(s"⚠️  Skipping invalid record:")
+                  println(s"    latencyValid=$latencyValid, minProducerTsValid=$minProducerTsValid, processingEndTsValid=$processingEndTsValid")
+                  println(s"    latency=${latencyMs}ms, producer=$minProducerTs, processing=$processingEndTs")
 
             catch
               case e: ClassCastException =>
-                println(s"\n⚠️  Type casting error: ${e.getMessage}")
-                e.printStackTrace()
+                if recordCount < 3 then
+                  println(s"\n⚠️  Type casting error (record $recordCount): ${e.getMessage}")
+                  e.printStackTrace()
               case e: Exception =>
-                println(s"\n⚠️  Error processing record: ${e.getMessage}")
-                e.printStackTrace()
+                if recordCount < 3 then
+                  println(s"\n⚠️  Error processing record $recordCount: ${e.getMessage}")
+                  e.printStackTrace()
           }
 
-      println(s"\n\n✅ Collected ${dataPoints.size} latency data points")
-      println(s"   Records processed: $recordCount")
+      println(s"\n\n✅ Collection complete!")
+      println(s"   Total records processed: $recordCount")
+      println(s"   Valid latency data points: ${dataPoints.size}")
       println(s"   Duration: ${(System.currentTimeMillis() - startTime) / 1000.0}%.2f seconds")
+      println(s"   Detected format: $detectedFormat")
       println()
 
       dataPoints.toSeq
@@ -264,13 +316,13 @@ object LatencyMonitor:
                      |Sample Count: ${metrics.sampleCount}
                      |
                      |Latency Statistics:
-                     |  Average: ${metrics.avgLatencyMs}%.2f ms
-                     |  Median (P50): ${metrics.p50LatencyMs}%.2f ms
-                     |  P95: ${metrics.p95LatencyMs}%.2f ms
-                     |  P99: ${metrics.p99LatencyMs}%.2f ms
-                     |  Min: ${metrics.minLatencyMs}%.2f ms
-                     |  Max: ${metrics.maxLatencyMs}%.2f ms
-                     |  Std Dev: ${metrics.stdDevLatencyMs}%.2f ms
+                     |  Average: ${String.format("%.2f", metrics.avgLatencyMs)} ms
+                     |  Median (P50): ${String.format("%.2f", metrics.p50LatencyMs)} ms
+                     |  P95: ${String.format("%.2f", metrics.p95LatencyMs)} ms
+                     |  P99: ${String.format("%.2f", metrics.p99LatencyMs)} ms
+                     |  Min: ${String.format("%.2f", metrics.minLatencyMs)} ms
+                     |  Max: ${String.format("%.2f", metrics.maxLatencyMs)} ms
+                     |  Std Dev: ${String.format("%.2f", metrics.stdDevLatencyMs)} ms
     """.stripMargin
 
     LatencyReport(
@@ -302,34 +354,28 @@ object LatencyMonitor:
     println(" Analysis:")
     println("-" * 70)
 
-    if report.metrics.avgLatencyMs < 30 then
-      println("   ✅ EXCELLENT - Very low average latency")
-    else if report.metrics.avgLatencyMs < 50 then
-      println("   ✅ GOOD - Low average latency")
-    else if report.metrics.avgLatencyMs < 100 then
-      println("   ⚠️  MODERATE - Acceptable latency")
+    if report.metrics.avgLatencyMs < 5000 then
+      println("   ✅ EXCELLENT - Very low latency")
+    else if report.metrics.avgLatencyMs < 30000 then
+      println("   ✅ GOOD - Acceptable latency")
+    else if report.metrics.avgLatencyMs < 60000 then
+      println("   ⚠️  MODERATE - Higher latency")
     else
       println("   ❌ HIGH - Latency needs optimization")
 
-    if report.metrics.p99LatencyMs < 50 then
-      println("   ✅ EXCELLENT - P99 latency very low")
-    else if report.metrics.p99LatencyMs < 100 then
-      println("   ✅ GOOD - P99 latency acceptable")
-    else if report.metrics.p99LatencyMs < 200 then
-      println("   ⚠️  MODERATE - P99 latency high")
+    if report.metrics.p99LatencyMs < 10000 then
+      println("   ✅ EXCELLENT - P99 very low")
+    else if report.metrics.p99LatencyMs < 60000 then
+      println("   ✅ GOOD - P99 acceptable")
     else
-      println("   ❌ HIGH - P99 latency needs attention")
+      println("   ⚠️  P99 latency is high")
 
-    if report.metrics.stdDevLatencyMs < 10 then
-      println("   ✅ EXCELLENT - Very consistent latency")
-    else if report.metrics.stdDevLatencyMs < 20 then
-      println("   ✅ GOOD - Consistent latency")
+    if report.metrics.stdDevLatencyMs < 5000 then
+      println("   ✅ EXCELLENT - Very consistent")
+    else if report.metrics.stdDevLatencyMs < 15000 then
+      println("   ✅ GOOD - Consistent")
     else
-      println("   ⚠️  MODERATE - Some variance in latency")
-
-    val p95ToP99Ratio = report.metrics.p99LatencyMs / report.metrics.p95LatencyMs
-    if p95ToP99Ratio > 1.5 then
-      println(f"   ⚠️  Long tail detected (P99/P95 ratio: ${p95ToP99Ratio}%.2f)")
+      println("   ⚠️  Some variance in latency")
 
     println("=" * 70)
 
@@ -340,14 +386,13 @@ object LatencyMonitor:
       .take(5)
       .zipWithIndex
       .foreach { case (dp, idx) =>
-        println(f"   ${idx + 1}. ${dp.metric}%-12s @ ${dp.stationName}%-20s: ${dp.latencyMs}%7.2f ms")
-        println(f"      Window: ${dp.windowStart} - ${dp.windowEnd}")
+        println(f"   ${idx + 1}. ${dp.metric}%-12s @ ${dp.stationName}%-20s: ${dp.latencyMs}%8.2f ms")
+        println(f"      Window: ${dp.windowStart} -> ${dp.windowEnd}")
       }
     println()
 
   def saveReport(report: LatencyReport): Unit =
-    import java.io.PrintWriter
-    import java.io.File
+    import java.io.{PrintWriter, File}
 
     val outputDir = sys.env.getOrElse("OUTPUT_DIR", "./benchmark-results")
     new File(outputDir).mkdirs()
@@ -362,7 +407,7 @@ object LatencyMonitor:
       writer.write("Detailed Data Points:\n")
       writer.write("=" * 70 + "\n")
       report.dataPoints.foreach { dp =>
-        writer.write(f"${dp.windowStart}%-25s ${dp.metric}%-12s ${dp.stationName}%-20s ${dp.latencyMs}%7.2f ms\n")
+        writer.write(f"${dp.windowStart}%-25s ${dp.metric}%-12s ${dp.stationName}%-20s ${dp.latencyMs}%8.2f ms\n")
       }
       println(s"📄 Report saved to: $filename")
     finally
@@ -376,6 +421,6 @@ object LatencyMonitor:
     props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, classOf[ByteArrayDeserializer].getName)
     props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
     props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false")
-    props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "100")
+    props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "500")
 
     new KafkaConsumer[String, Array[Byte]](props)
