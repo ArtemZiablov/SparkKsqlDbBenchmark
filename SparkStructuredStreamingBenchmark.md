@@ -6,9 +6,11 @@ This guide explains how to run the Spark streaming benchmark for the weather dat
 
 - Java 11
 - Docker (for Kafka, Schema Registry, Zookeeper)
-- Scala 3.3.x
+- Scala 3
 - SBT (Scala Build Tool)
-- macOS or Linux
+- macOS, Linux, or Windows (with WSL2 or Git Bash)
+
+**Note:** Complete installation instructions for all technologies are provided in the [Appendix: Installation Guide](#appendix-installation-guide) at the end of this document.
 
 ## Architecture Overview
 
@@ -305,6 +307,295 @@ java -jar spark-consumer/target/scala-3.3.7/spark-consumer.jar 100
 cd <module>
 rm -rf target .bsp
 sbt clean compile assembly
+```
+
+## Appendix: Installation Guide
+
+If you need to install Java, Scala, or SBT, follow these platform-specific instructions.
+
+### Install Java 11
+
+#### macOS (using Homebrew)
+
+```bash
+# Install Java 11
+brew install openjdk@11
+
+# Verify installation
+java -version
+
+# Set JAVA_HOME permanently (add to ~/.zshrc or ~/.bash_profile)
+echo 'export JAVA_HOME=$(/usr/libexec/java_home -v 11)' >> ~/.zshrc
+source ~/.zshrc
+```
+
+#### Linux (Ubuntu/Debian)
+
+```bash
+# Update package manager
+sudo apt update
+
+# Install Java 11
+sudo apt install openjdk-11-jdk
+
+# Verify installation
+java -version
+
+# Set JAVA_HOME permanently (add to ~/.bashrc)
+echo 'export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64' >> ~/.bashrc
+source ~/.bashrc
+```
+
+#### Linux (CentOS/RHEL)
+
+```bash
+# Install Java 11
+sudo yum install java-11-openjdk java-11-openjdk-devel
+
+# Verify installation
+java -version
+
+# Set JAVA_HOME permanently
+echo 'export JAVA_HOME=/usr/lib/jvm/java-11-openjdk' >> ~/.bashrc
+source ~/.bashrc
+```
+
+#### Windows
+
+**Option A: Using Chocolatey (easiest)**
+
+```powershell
+# Install Chocolatey if not already installed
+# Run PowerShell as Administrator, then:
+Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+
+# Install Java 11
+choco install openjdk11
+
+# Verify
+java -version
+```
+
+**Option B: Manual download**
+
+1. Download from [Oracle JDK 11](https://www.oracle.com/java/technologies/javase/jdk11-archive-downloads.html) or [OpenJDK 11](https://jdk.java.net/archive/)
+2. Run the installer
+3. Set JAVA_HOME environment variable:
+   - Right-click Computer → Properties → Advanced system settings
+   - Click "Environment Variables"
+   - Click "New" under System variables
+   - Variable name: `JAVA_HOME`
+   - Variable value: `C:\Program Files\Java\jdk-11` (adjust path as needed)
+
+**Verify:**
+```powershell
+java -version
+```
+
+### Install Scala
+
+Scala 3 is automatically downloaded by SBT, but you can install it separately if needed.
+
+#### macOS
+
+```bash
+brew install scala
+scala -version
+```
+
+#### Linux
+
+```bash
+sudo apt install scala
+scala -version
+```
+
+#### Windows (Chocolatey)
+
+```powershell
+choco install scala
+scala -version
+```
+
+**Note:** If you get Scala 2.x instead of Scala 3, SBT will handle downloading Scala 3 automatically when you first build a project. This is normal and expected.
+
+### Install SBT
+
+#### macOS
+
+```bash
+# Using Homebrew (recommended)
+brew install sbt
+
+# Verify installation
+sbt --version
+```
+
+#### Linux (Ubuntu/Debian)
+
+```bash
+# Add SBT repository
+echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
+
+# Install SBT
+sudo apt update
+sudo apt install sbt
+
+# Verify installation
+sbt --version
+```
+
+#### Linux (CentOS/RHEL)
+
+```bash
+# Add SBT repository
+curl https://bintray.com/sbt/rpm/rpm | sudo tee /etc/yum.repos.d/bintray-sbt-rpm.repo
+
+# Install SBT
+sudo yum install sbt
+
+# Verify installation
+sbt --version
+```
+
+#### Windows (Chocolatey)
+
+```powershell
+choco install sbt
+
+# Verify installation
+sbt --version
+```
+
+#### Windows (Manual)
+
+1. Download from [SBT official site](https://www.scala-sbt.org/download.html)
+2. Run the installer
+3. Add SBT to PATH:
+   - Right-click Computer → Properties → Advanced system settings
+   - Click "Environment Variables"
+   - Edit the `Path` variable and add SBT installation directory
+
+**Verify:**
+```powershell
+sbt --version
+```
+
+### Install Docker
+
+#### macOS
+
+```bash
+# Using Homebrew
+brew install docker
+
+# Or download Docker Desktop from https://www.docker.com/products/docker-desktop
+# Then run the installer
+```
+
+#### Linux
+
+```bash
+# Ubuntu/Debian
+sudo apt update
+sudo apt install docker.io docker-compose
+
+# Start Docker service
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# Add user to docker group (optional - allows running without sudo)
+sudo usermod -aG docker $USER
+```
+
+#### Windows
+
+1. Download [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop)
+2. Run the installer
+3. Restart your computer
+4. Verify: Open PowerShell and run `docker --version`
+
+### Verify All Installations
+
+```bash
+# macOS/Linux
+java -version
+scala -version
+sbt --version
+docker --version
+
+# Windows (PowerShell)
+java -version
+scala -version
+sbt --version
+docker --version
+```
+
+All should show version numbers without errors. For Scala, you should see version 3.x:
+
+### Platform-Specific Notes
+
+#### macOS on Apple Silicon (M1/M2/M3)
+
+If you encounter architecture mismatch errors:
+
+```bash
+# Install Java for ARM64
+brew install openjdk@11 --arch=arm64
+
+# Or use a native ARM64 JDK
+brew tap mdanial/tap
+brew install java11-arm64
+```
+
+#### Windows: Use WSL2 or Git Bash
+
+For best compatibility, run the benchmark within:
+- **WSL2 (Windows Subsystem for Linux 2)** - Recommended
+  ```powershell
+  # Install WSL2
+  wsl --install Ubuntu-22.04
+  
+  # Then follow Linux instructions inside WSL2
+  ```
+- **Git Bash** - Alternative
+  ```bash
+  # Install from https://git-scm.com/download/win
+  # Then use Bash commands listed in this guide
+  ```
+
+#### Troubleshooting Installation
+
+**"command not found" errors:**
+```bash
+# macOS - Reload shell after installation
+source ~/.zshrc
+# or
+source ~/.bash_profile
+
+# Linux - Same as macOS
+source ~/.bashrc
+
+# Windows - Restart PowerShell or open new terminal window
+```
+
+**"JAVA_HOME not set" error:**
+```bash
+# Verify JAVA_HOME is set
+echo $JAVA_HOME        # macOS/Linux
+echo %JAVA_HOME%       # Windows (PowerShell)
+
+# If empty, follow the installation steps above
+```
+
+**SBT slow on first run:**
+```bash
+# SBT downloads dependencies on first run - this is normal
+# First run may take 5-10 minutes
+# Subsequent runs are much faster
+sbt --version  # First run - wait
+sbt --version  # Second run - instant
 ```
 
 ## Performance Tuning
