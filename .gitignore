@@ -1,0 +1,34 @@
+# Scala / SBT
+target/
+project/target/
+project/project/
+.bsp/
+.idea/
+*.class
+*.log
+
+# Benchmark results
+benchmark-results/
+*.txt
+
+# Spark
+spark-warehouse/
+derby.log
+metastore_db/
+
+# Kafka / Checkpoints
+/tmp/
+checkpoints/
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
