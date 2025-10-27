@@ -43,10 +43,12 @@ object KafkaWeatherProducer:
 
   def createProducer(): KafkaProducer[String, GenericRecord] =
     val props = new Properties()
-    props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092")
+    props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
+      sys.env.getOrElse("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"))
     props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, classOf[StringSerializer].getName)
     props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, classOf[KafkaAvroSerializer].getName)
-    props.put("schema.registry.url", "http://localhost:8081")
+    props.put("schema.registry.url",
+      sys.env.getOrElse("SCHEMA_REGISTRY_URL", "http://localhost:8081"))
     props.put(ProducerConfig.ACKS_CONFIG, "1")
     props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "snappy")
     props.put(ProducerConfig.LINGER_MS_CONFIG, "10")

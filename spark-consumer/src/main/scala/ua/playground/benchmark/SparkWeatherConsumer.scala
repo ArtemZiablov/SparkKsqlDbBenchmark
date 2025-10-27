@@ -128,8 +128,7 @@ object SparkWeatherConsumer:
       val kafkaSinkQuery = kafkaOutputDF.writeStream
         .format("kafka")
         .outputMode("update")
-        .option("kafka.bootstrap.servers", "localhost:9092")
-        .option("topic", finalKafkaTopic)
+        .option("kafka.bootstrap.servers", sys.env.getOrElse("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"))        .option("topic", finalKafkaTopic)
         .option("checkpointLocation", checkpointLocation)
         // OPTIMIZATION: Add Kafka producer configs for performance
         .option("kafka.compression.type", "snappy")
@@ -172,7 +171,7 @@ object SparkWeatherConsumer:
 
     val kafkaDF = spark.readStream
       .format("kafka")
-      .option("kafka.bootstrap.servers", "localhost:9092")
+      .option("kafka.bootstrap.servers", sys.env.getOrElse("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"))
       .option("subscribe", topic)
       .option("startingOffsets", "earliest")
       .option("maxOffsetsPerTrigger", maxOffsetsPerTrigger.toString)

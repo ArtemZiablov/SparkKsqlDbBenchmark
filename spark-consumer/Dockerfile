@@ -43,7 +43,6 @@ ENV SCHEMA_REGISTRY_URL=http://localhost:8081
 ENV THROUGHPUT=100
 ENV SPARK_LOCAL_DIRS=/tmp/spark
 ENV SPARK_LOG_DIR=/app/logs
-
 # Entry point
 ENTRYPOINT ["java", "-Xmx4g", "-Xms2g", "-jar", "/app/consumer.jar"]
 
