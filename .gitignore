@@ -1,11 +1,17 @@
-# Scala / SBT
+# Combined Ignore List
+
+# Scala / SBT / IDE
 target/
 project/target/
 project/project/
 .bsp/
 .idea/
+**/.idea/
 *.class
 *.log
+
+# Python / Virtual Environments
+**/.venv/
 
 # Benchmark results
 benchmark-results/
